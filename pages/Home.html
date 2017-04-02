@@ -134,16 +134,17 @@
             </thead>
             <tbody id = "view-result">
             {{range .Contacts}}
-            <tr id="contact-row-{{.ID}}">
+            <tr id="contact-row-{{.Id}}">
                 <td>{{.Name}}</td>
                 <td>{{.Email}}</td>
                 <td>{{.Nationality}}</td>
+                <td>{{.Nationality}}</td>
                 <td>{{.Address}}</td>
                 <td>
-                    <button class="delete-btn" onclick="DeleteContact({{.ID}})"> Delete </button>
+                    <button class="delete-btn" onclick="DeleteContact({{.Id}})"> Delete </button>
                 </td>
                 <td>
-                    <button class="View-btn" onclick="ViewContactData({{.ID}})" > View Numbers </button>
+                    <button class="View-btn" onclick="ViewContactData({{.Id}})" > View Numbers </button>
                 </td>
             </tr>
             {{end}}
@@ -199,7 +200,7 @@ function ViewContactData(id){
     $("#telephone-form").show();
     $("#show-form").hide();
     $.ajax({
-        url:"/viewNumbers/" + id ,
+        url:"/viewnumbers/" + id ,
         type:"GET" ,
         success:function(dataFromServer){
          var parsed = JSON.parse(dataFromServer);
@@ -210,7 +211,7 @@ function ViewContactData(id){
                 var contactId;
 
                 parsed.forEach(function(result){
-                contactId =result.Contact_id ;
+                contactId =result.ContactId ;
                 console.log(6);
                 var row = $("<tr id='tele-row-"+result.num_id+"'><td>"+result.Number+"</td><td><button class='delete-btn' onclick='DeleteNumber("+result.Num_id+")'>Delete Number</button></td></tr>");
                 SearchResult.append(row);
@@ -226,7 +227,7 @@ function ViewContactData(id){
 function DeleteNumber(numId)
 {
     $.ajax({
-    url:"/deleteNumber/" + numId ,
+    url:"/deletenumber/" + numId ,
     type:"DELETE",
     success:function(){
     $("#tele-row-" +numId).remove();
@@ -236,7 +237,7 @@ function DeleteNumber(numId)
 function AddNumber(ContactId)
 {
     $.ajax({
-        url:"/addNumber/" + ContactId ,
+        url:"/addnumber/" + ContactId ,
         type:"POST" ,
         data:$("#NewNum").serialize(),
         success:function(dataFromServer){

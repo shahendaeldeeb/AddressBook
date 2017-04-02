@@ -22,83 +22,117 @@ import (
 	"strconv"
 	//"golang.org/x/tools/go/gcimporter15/testdata"
 	"encoding/json"
+	//"github.com/revel/modules/db/app"
+	//"golang.org/x/tools/go/gcimporter15/testdata"
+	//"golang.org/x/tools/go/gcimporter15/testdata"
 )
 type User struct {
 	 Username string `db:"username"`
 	 Password []byte `db:"userpassword"`
 }
-type contact_info struct{
+type contactInfo struct{
+	Id 		int      `db:"id"`
 	Name   		string   `db:"name"`
 	Number 		string   `db:"number"`
 	Email  		string   `db:"email"`
 	Nationality 	string   `db:"nationality"`
 	Address 	string   `db:"address"`
 	Username  	string   `db:"username"`
-	ID 		int   `db:"id"`
+
 }
 type LoginPage struct {
 	Error string
 }
 type page struct{
-	Contacts []contact_info
+	Contacts []contactInfo
 	Numbers []Telephone
 }
 type Telephone struct {
-	Contact_id int `db:"contactid"`
+	ContactId int `db:"contactid"`
 	Number string  	`db:"number"`
 	Num_id int	`db:"numid"`
 
 }
-var muxer = mux.NewRouter()
-func main(){
-	initDb()
+type HandlersVars struct {
+	db *sql.DB
+}
+type appHandlers struct{
+	*HandlersVars
+	F  func(http.ResponseWriter, *http.Request ,*HandlersVars)
+}
+type middlewareHandlers struct{
+	*HandlersVars
+	F  func(http.ResponseWriter, *http.Request ,http.HandlerFunc, *HandlersVars)
+}
+func (middleware middlewareHandlers)ServeHTTP( w http.ResponseWriter , r *http.Request , next http.HandlerFunc){
+	// Updated to pass app.handlervars as a parameter to our handler type.
+	middleware.F(w,r,next,middleware.HandlersVars)
 
-	var contact contact_info
+}
+func (app appHandlers)ServeHTTP( w http.ResponseWriter , r *http.Request){
+	// Updated to pass app.handlervars as a parameter to our handler type.
+	 app.F(w,r,app.HandlersVars)
+
+}
+
+func main(){
+	muxer := mux.NewRouter()
+	dataBase := initDb()
+	defer dataBase.Close()
+	var contact contactInfo
 	var userAccount User
 	var telephone Telephone
+	usedDataBase := &HandlersVars{db: dataBase}
 
-	muxer.HandleFunc("/viewNumbers/{id}", telephone.ViewTelephonesHandler).Methods("GET")
-	muxer.HandleFunc("/contact",contact.SaveContactHandler).Methods("POST")
-	muxer.HandleFunc("/contact/{id}" , contact.DeleteContactHandler).Methods("DELETE")
-	muxer.HandleFunc("/deleteNumber/{numId}" , telephone.DeleteNumberHandler).Methods("DELETE")
-	muxer.HandleFunc("/addNumber/{ContactId}" ,telephone.AddNumberHandler).Methods("POST")
- 	muxer.HandleFunc("/logout" ,userAccount.logoutHandler)
-	muxer.HandleFunc("/" ,serverContent)
+	muxer.Handle("/viewnumbers/{id}" , appHandlers{usedDataBase ,telephone.ViewTelephonesHandler })
+	muxer.Handle("/contact", appHandlers{usedDataBase ,contact.SaveContactHandler})
+	muxer.Handle("/contact/{id}" , appHandlers{usedDataBase,contact.DeleteContactHandler}).Methods("DELETE")
+	muxer.Handle("/deletenumber/{numId}" ,appHandlers{usedDataBase, telephone.DeleteNumberHandler}).Methods("DELETE")
+	muxer.Handle("/addnumber/{ContactId}" ,appHandlers{usedDataBase, telephone.AddNumberHandler}).Methods("POST")
 
-	muxer.HandleFunc("/login" ,userAccount.loginContactHandler)
-	muxer.HandleFunc("/{page_alias}" , serverContent)
+	muxer.HandleFunc("/logout" ,userAccount.logoutHandler)
+	muxer.Handle("/" ,appHandlers{usedDataBase ,serverContent})
+
+	muxer.Handle("/login" ,appHandlers{usedDataBase ,userAccount.loginContactHandler})
+	muxer.Handle("/{page_alias}" , appHandlers{usedDataBase , serverContent})
 
 	muxer.HandleFunc("/img/" ,serverResource)
 	muxer.HandleFunc("/js/" ,serverResource)
 	muxer.HandleFunc("/css/{page_alias}" ,serverResource)
 
+	//muxerHandleFunc("/viewnumbers/{id}", telephone.ViewTelephonesHandler).Methods("GET")
+	//muxer.HandleFunc("/contact",contact.SaveContactHandler).Methods("POST")
+	//muxer.HandleFunc("/contact/{id}" , contact.DeleteContactHandler).Methods("DELETE")
+	//muxer.HandleFunc("/deletenumber/{numId}" , telephone.DeleteNumberHandler).Methods("DELETE")
+	//muxer.HandleFunc("/addnumber/{ContactId}" ,telephone.AddNumberHandler).Methods("POST")
+ 	//muxer.HandleFunc("/logout" ,userAccount.logoutHandler)
+	//muxer.HandleFunc("/" ,serverContent)
+	//muxer.HandleFunc("/login" ,userAccount.loginContactHandler)
+	//muxer.HandleFunc("/{page_alias}" , serverContent)
+
+
 	//it provides some default middleware
 	n := negroni.Classic()
 	n.Use(sessions.Sessions("go-for-web-dev" , cookiestore.New([]byte("my-secret-123"))))
 	//add Handler to middleware stack
-	n.Use(negroni.HandlerFunc(verifyDatabase))
+	n.Use(middlewareHandlers{usedDataBase,verifyDatabase})
 	// to add http.Handler (process that runs in response to request made to web app.)alli f el mux in negroni stack
 	n.UseHandler(muxer)
 	n.Run(":8080")
-	defer db.Close()
+
 }
-var db *sql.DB
-//var dbmap *gorp.DbMap
-func initDb (){
-	db,_ =sql.Open("mysql" , "root:shahenda_hassan@/mydatabase")
-      	//first parameter is a pointer to our database , second is used sql (sqlight or mysql)
-	//dbmap = &gorp.DbMap{Db:db , Dialect:gorp.MySQLDialect{"InnoDB", "UTF8"}}
+//var db *sql.DB
+func initDb () *sql.DB{
+	db, err := sql.Open("mysql" , "root:shahenda_hassan@/mydatabase")
+	if err != nil {
+		panic(err.Error())
+	}
+	return db
 
-	//dbmap.AddTableWithName(contact_info{} , "Contacts").SetKeys(false , "name")
-	//dbmap.AddTableWithName(Telephone{} , "Telephones").SetKeys(false , "number")
-	//dbmap.AddTableWithName(User{} , "Users").SetKeys(false , "username")
-
-	//dbmap.CreateTablesIfNotExists()
 }
-
-func verifyDatabase(w http.ResponseWriter , r *http.Request , next http.HandlerFunc){
+func verifyDatabase(w http.ResponseWriter , r *http.Request , next http.HandlerFunc , a *HandlersVars ){
 	//ping() -> it verify connection to database is still alive , establishing connection if necessary
-	err := db.Ping();
+	err := a.db.Ping();
 	if err != nil{
 		http.Error(w, err.Error() , http.StatusInternalServerError)
 		return
@@ -106,13 +140,13 @@ func verifyDatabase(w http.ResponseWriter , r *http.Request , next http.HandlerF
 	next(w,r)
 }
 
-func(info User)loginContactHandler (w http.ResponseWriter , r *http.Request){
+func(info User)loginContactHandler (w http.ResponseWriter , r *http.Request , a *HandlersVars ){
 	var p LoginPage
 
 	if r.FormValue("signUp") != ""{
 		secret , _ := bcrypt.GenerateFromPassword([]byte(r.FormValue("password")) , bcrypt.DefaultCost)
 		info = User{r.FormValue("username") , secret}
-		stmt ,err := db.Prepare("INSERT Users SET username=? , userpassword=?")
+		stmt ,err := a.db.Prepare("INSERT Users SET username=? , userpassword=?")
 		_ ,err =stmt.Exec(info.Username ,info.Password)
 		if err != nil{
 			p.Error = err.Error()
@@ -126,11 +160,12 @@ func(info User)loginContactHandler (w http.ResponseWriter , r *http.Request){
 		}
 
 	}else if r.FormValue("login") != ""{
-		row ,err := db.Query("SELECT * FROM Users WHERE username =?" , r.FormValue("username"))
-		for  row.Next(){
+		row ,err := a.db.Query("SELECT * FROM Users WHERE username =?" , r.FormValue("username"))
+		defer row.Close()
+		if row.Next(){
 			row.Scan(&info.Username , &info.Password)
 		}
-		defer row.Close()
+
 		if err != nil {
 			p.Error = err.Error()
 			return
@@ -167,7 +202,7 @@ func(u User)logoutHandler(w http.ResponseWriter , r *http.Request){
 	sessions.GetSession(r).Set("User" , nil)
 	http.Redirect(w , r , "/Login" , http.StatusFound)
 }
-func(contact contact_info)SaveContactHandler(w http.ResponseWriter , r *http.Request){
+func(contact contactInfo)SaveContactHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	contact.Name = r.FormValue("name")
 	contact.Number = r.FormValue("number")
 	contact.Email = r.FormValue("email")
@@ -175,7 +210,7 @@ func(contact contact_info)SaveContactHandler(w http.ResponseWriter , r *http.Req
 	contact.Address = r.FormValue("address")
 	contact.Username = sessions.GetSession(r).Get("User").(string)
 
-	stmt , err := db.Prepare("INSERT Contacts SET name=?  , email=? , nationality=? ,address=? ,username=?")
+	stmt , err := a.db.Prepare("INSERT Contacts SET name=?  , email=? , nationality=? ,address=? ,username=?")
 	checkErr(err)
 	res , err := stmt.Exec(contact.Name,contact.Email,contact.Nationality,contact.Address,contact.Username)
 	checkErr(err)
@@ -185,28 +220,28 @@ func(contact contact_info)SaveContactHandler(w http.ResponseWriter , r *http.Req
 	var num Telephone
 	num.Number = r.FormValue("number")
 
-	num.Contact_id = int(id)
+	num.ContactId = int(id)
 
-	_ =addNum(num.Number , num.Contact_id)
+	_ =addNum(num.Number , num.ContactId , a )
 	sessions.GetSession(r).Set("Contact" , id)
 }
-func(contact contact_info)DeleteContactHandler (w http.ResponseWriter , r *http.Request){
+func(contact contactInfo)DeleteContactHandler (w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	ID , _ := strconv.ParseInt(mux.Vars(r)["id"] , 10 , 64)
 	fmt.Println(ID)
-	stmt , err :=db.Prepare("delete from Contacts where id=?")
+	stmt , err := a.db.Prepare("delete from Contacts where id=?")
 	checkErr(err)
 	_ ,err = stmt.Exec(ID)
 	checkErr(err)
 
 }
-func(tele Telephone)ViewTelephonesHandler(w http.ResponseWriter , r *http.Request){
+func(tele Telephone )ViewTelephonesHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	ID , _ := strconv.ParseInt(mux.Vars(r)["id"] , 10 , 64)
 	p1:=page{Numbers:[]Telephone{} }
 	//fmt.Println(ID)
-	rows,err := db.Query("select * from Telephones where contactid =?" , ID)
+	rows,err := a.db.Query("select * from Telephones where contactid =?" , ID)
 	checkErr(err)
 	for rows.Next() {
-		rows.Scan(&tele.Contact_id ,&tele.Number , &tele.Num_id)
+		rows.Scan(&tele.ContactId ,&tele.Number , &tele.Num_id)
 		p1.Numbers = append(p1.Numbers , tele)
 	}
 	//fmt.Println(p1.Numbers)
@@ -217,16 +252,16 @@ func(tele Telephone)ViewTelephonesHandler(w http.ResponseWriter , r *http.Reques
 		http.Error(w, err.Error() , http.StatusInternalServerError)
 	}
 }
-func(tele Telephone)DeleteNumberHandler(w http.ResponseWriter , r *http.Request){
+func(tele Telephone)DeleteNumberHandler(w http.ResponseWriter , r *http.Request ,a *HandlersVars){
 	NumID , _ := strconv.ParseInt(mux.Vars(r)["numId"] , 10 , 64)
 	fmt.Println(NumID)
-	stmt , err :=db.Prepare("delete from Telephones where Numid=?")
+	stmt , err :=a.db.Prepare("delete from Telephones where Numid=?")
 	checkErr(err)
 	_ ,err = stmt.Exec(NumID)
 	checkErr(err)
 
 }
-func(tele Telephone)AddNumberHandler(w http.ResponseWriter , r *http.Request){
+func(tele Telephone)AddNumberHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	fmt.Println("helloo from add number ")
 	ContactID , _ := strconv.ParseInt(mux.Vars(r)["ContactId"] , 10 , 64)
 	//fmt.Print("contactid")
@@ -234,9 +269,9 @@ func(tele Telephone)AddNumberHandler(w http.ResponseWriter , r *http.Request){
 	fmt.Print("new number :")
 
 	fmt.Println(r.FormValue("NewNumber"))
-	id := addNum(r.FormValue("NewNumber") , int(ContactID))
+	id := addNum(r.FormValue("NewNumber") , int(ContactID) , a)
 	tele.Number = r.FormValue("NewNumber")
-	tele.Contact_id = int(ContactID)
+	tele.ContactId = int(ContactID)
 	tele.Num_id = int(id)
 	encoder := json.NewEncoder(w)
 	err := encoder.Encode(tele)
@@ -246,8 +281,8 @@ func(tele Telephone)AddNumberHandler(w http.ResponseWriter , r *http.Request){
 	}
 
 }
-func addNum (number string , contactId int )(int64){
-	stmt2,err :=db.Prepare("INSERT Telephones SET number=? , contactid=?")
+func addNum (number string , contactId int , a *HandlersVars)(int64){
+	stmt2,err :=a.db.Prepare("INSERT Telephones SET number=? , contactid=?")
 	checkErr(err)
 	 stmt, err := stmt2.Exec(number , contactId)
 	checkErr(err)
@@ -255,7 +290,6 @@ func addNum (number string , contactId int )(int64){
 	checkErr(err)
 	return id
 }
-
 
 //-------------------------------Static Pages Handle Functions ---------------------------------------------
 //retrieve all static pages
@@ -276,15 +310,15 @@ func populateStaticPages() *template.Template{
 	result.ParseFiles(*templatePathes...)
 	return  result
 }
-func serverContent (w http.ResponseWriter , r *http.Request){
+func serverContent (w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	staticPages := populateStaticPages()
 
-	p := page{Contacts:[]contact_info{}}
-	rows , err := db.Query("select * from Contacts where username =? " ,sessions.GetSession(r).Get("User").(string))
+	p := page{Contacts:[]contactInfo{}}
+	rows , err := a.db.Query("select * from Contacts where username =? " ,sessions.GetSession(r).Get("User").(string))
         checkErr(err)
-	var contact contact_info
+	var contact contactInfo
 	for rows.Next() {
-		rows.Scan(&contact.Name ,&contact.Email ,&contact.Nationality ,&contact.Address , &contact.Username ,&contact.ID)
+		rows.Scan(&contact.Name ,&contact.Email ,&contact.Nationality ,&contact.Address , &contact.Username ,&contact.Id)
 		p.Contacts = append(p.Contacts ,contact)
 	}
 	//mux.vars() -> creates a map of rout variables that can be retrieved
