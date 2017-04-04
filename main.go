@@ -9,7 +9,6 @@ import (
 	"strings"
 	"bufio"
 	"database/sql"
-	//"github.com/coopernurse/gorp"
 	//"encoding/json"
 	_"github.com/go-sql-driver/mysql"
   	"github.com/goincremental/negroni-sessions"
@@ -19,6 +18,7 @@ import (
 	"github.com/goincremental/negroni-sessions/cookiestore"
 	"fmt"
 //	"os/user"
+
 	"strconv"
 	//"golang.org/x/tools/go/gcimporter15/testdata"
 	"encoding/json"
@@ -30,7 +30,7 @@ type User struct {
 	 Username string `db:"username"`
 	 Password []byte `db:"userpassword"`
 }
-type contactInfo struct{
+type ContactInfo struct{
 	Id 		int      `db:"id"`
 	Name   		string   `db:"name"`
 	Number 		string   `db:"number"`
@@ -44,7 +44,7 @@ type LoginPage struct {
 	Error string
 }
 type page struct{
-	Contacts []contactInfo
+	Contacts []ContactInfo
 	Numbers []Telephone
 }
 type Telephone struct {
@@ -58,20 +58,21 @@ type HandlersVars struct {
 }
 type appHandlers struct{
 	*HandlersVars
-	F  func(http.ResponseWriter, *http.Request ,*HandlersVars)
+	NewHandlerFunc func(http.ResponseWriter, *http.Request ,*HandlersVars)
 }
+
 type middlewareHandlers struct{
 	*HandlersVars
-	F  func(http.ResponseWriter, *http.Request ,http.HandlerFunc, *HandlersVars)
+	NewMiddleWarHandler func(http.ResponseWriter, *http.Request ,http.HandlerFunc, *HandlersVars)
 }
 func (middleware middlewareHandlers)ServeHTTP( w http.ResponseWriter , r *http.Request , next http.HandlerFunc){
 	// Updated to pass app.handlervars as a parameter to our handler type.
-	middleware.F(w,r,next,middleware.HandlersVars)
+	middleware.NewMiddleWarHandler(w,r,next,middleware.HandlersVars)
 
 }
 func (app appHandlers)ServeHTTP( w http.ResponseWriter , r *http.Request){
 	// Updated to pass app.handlervars as a parameter to our handler type.
-	 app.F(w,r,app.HandlersVars)
+	 app.NewHandlerFunc(w,r,app.HandlersVars)
 
 }
 
@@ -79,7 +80,7 @@ func main(){
 	muxer := mux.NewRouter()
 	dataBase := initDb()
 	defer dataBase.Close()
-	var contact contactInfo
+	var contact ContactInfo
 	var userAccount User
 	var telephone Telephone
 	usedDataBase := &HandlersVars{db: dataBase}
@@ -202,7 +203,7 @@ func(u User)logoutHandler(w http.ResponseWriter , r *http.Request){
 	sessions.GetSession(r).Set("User" , nil)
 	http.Redirect(w , r , "/Login" , http.StatusFound)
 }
-func(contact contactInfo)SaveContactHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
+func(contact ContactInfo)SaveContactHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	contact.Name = r.FormValue("name")
 	contact.Number = r.FormValue("number")
 	contact.Email = r.FormValue("email")
@@ -225,7 +226,7 @@ func(contact contactInfo)SaveContactHandler(w http.ResponseWriter , r *http.Requ
 	_ =addNum(num.Number , num.ContactId , a )
 	sessions.GetSession(r).Set("Contact" , id)
 }
-func(contact contactInfo)DeleteContactHandler (w http.ResponseWriter , r *http.Request , a *HandlersVars){
+func(contact ContactInfo)DeleteContactHandler (w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	ID , _ := strconv.ParseInt(mux.Vars(r)["id"] , 10 , 64)
 	fmt.Println(ID)
 	stmt , err := a.db.Prepare("delete from Contacts where id=?")
@@ -313,14 +314,15 @@ func populateStaticPages() *template.Template{
 func serverContent (w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	staticPages := populateStaticPages()
 
-	p := page{Contacts:[]contactInfo{}}
+	p := page{Contacts:[]ContactInfo{}}
 	rows , err := a.db.Query("select * from Contacts where username =? " ,sessions.GetSession(r).Get("User").(string))
         checkErr(err)
-	var contact contactInfo
+	var contact ContactInfo
 	for rows.Next() {
 		rows.Scan(&contact.Name ,&contact.Email ,&contact.Nationality ,&contact.Address , &contact.Username ,&contact.Id)
 		p.Contacts = append(p.Contacts ,contact)
 	}
+
 	//mux.vars() -> creates a map of rout variables that can be retrieved
         urlParams := mux.Vars(r)
 	page_alias := urlParams["page_alias"]
