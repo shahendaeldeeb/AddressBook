@@ -1,6 +1,7 @@
 package main
 
 import (
+	"gopkg.in/validator.v2"
 	"net/http"
 	"html/template"
 	"github.com/gorilla/mux"
@@ -9,34 +10,26 @@ import (
 	"strings"
 	"bufio"
 	"database/sql"
-	//"encoding/json"
-	_"github.com/go-sql-driver/mysql"
+_	"github.com/go-sql-driver/mysql"
   	"github.com/goincremental/negroni-sessions"
-	//"github.com/goincremental/negroni-sessions/cookiestore"
 	"github.com/urfave/negroni"
 	"golang.org/x/crypto/bcrypt"
 	"github.com/goincremental/negroni-sessions/cookiestore"
-	"fmt"
-//	"os/user"
-
+	//"fmt"
 	"strconv"
-	//"golang.org/x/tools/go/gcimporter15/testdata"
 	"encoding/json"
-	//"github.com/revel/modules/db/app"
-	//"golang.org/x/tools/go/gcimporter15/testdata"
-	//"golang.org/x/tools/go/gcimporter15/testdata"
 )
 type User struct {
-	 Username string `db:"username"`
-	 Password []byte `db:"userpassword"`
+	 Username string ` validate:"regexp=^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$"   db:"username"`
+	 Password []byte `validate: "nonzero" db:"userpassword"`
 }
 type ContactInfo struct{
 	Id 		int      `db:"id"`
-	Name   		string   `db:"name"`
-	Number 		string   `db:"number"`
-	Email  		string   `db:"email"`
-	Nationality 	string   `db:"nationality"`
-	Address 	string   `db:"address"`
+	Name   		string   ` validate:"nonzero" db:"name"`
+	Number 		string   ` validate:"min=8 , max=12 , nonzero" db:"number"`
+	Email  		string   ` validate:"nonzero,regexp=^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$ "db:"email"`
+	Nationality 	string   ` validate :"nonzero" db:"nationality"`
+	Address 	string   `validate:"nonzero" db:"address"`
 	Username  	string   `db:"username"`
 
 }
@@ -48,8 +41,8 @@ type page struct{
 	Numbers []Telephone
 }
 type Telephone struct {
-	ContactId int `db:"contactid"`
-	Number string  	`db:"number"`
+	ContactId int   `db:"contactid"`
+	Number string  	`validate :"nonzero" db:"number"`
 	Num_id int	`db:"numid"`
 
 }
@@ -76,40 +69,136 @@ func (app appHandlers)ServeHTTP( w http.ResponseWriter , r *http.Request){
 
 }
 
-func main(){
+func main() {
 	muxer := mux.NewRouter()
 	dataBase := initDb()
 	defer dataBase.Close()
-	var contact ContactInfo
-	var userAccount User
-	var telephone Telephone
 	usedDataBase := &HandlersVars{db: dataBase}
 
-	muxer.Handle("/viewnumbers/{id}" , appHandlers{usedDataBase ,telephone.ViewTelephonesHandler })
-	muxer.Handle("/contact", appHandlers{usedDataBase ,contact.SaveContactHandler})
-	muxer.Handle("/contact/{id}" , appHandlers{usedDataBase,contact.DeleteContactHandler}).Methods("DELETE")
-	muxer.Handle("/deletenumber/{numId}" ,appHandlers{usedDataBase, telephone.DeleteNumberHandler}).Methods("DELETE")
-	muxer.Handle("/addnumber/{ContactId}" ,appHandlers{usedDataBase, telephone.AddNumberHandler}).Methods("POST")
+	muxer.HandleFunc("/viewnumbers/{id}", func(w http.ResponseWriter, r *http.Request)  {
+		var tele Telephone
+		p := tele.ViewTelephonesHandler(tele.ContactId,tele.Number,tele.Num_id,mux.Vars(r)["id"], usedDataBase)
+		encoder := json.NewEncoder(w)
+		err := encoder.Encode(p.Numbers)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+	muxer.HandleFunc("/contact", func(w http.ResponseWriter, r *http.Request) {
+		var contact ContactInfo
+		contact.Name = r.FormValue("name")
+		contact.Number = r.FormValue("number")
+		contact.Email = r.FormValue("email")
+		contact.Nationality = r.FormValue("nationality")
+		contact.Address = r.FormValue("address")
+		contact.Username = sessions.GetSession(r).Get("User").(string)
+		if errs := validator.Validate(contact); errs != nil {
+			checkErr(errs)
+		}
+		// TODO: Validate el data
+		// TODO: Mini FLTR
+		//       F Format
+		//       L Length
+		//       T Type
+		//       R Range
+		var num Telephone
 
-	muxer.HandleFunc("/logout" ,userAccount.logoutHandler)
-	muxer.Handle("/" ,appHandlers{usedDataBase ,serverContent})
+		id := contact.SaveContactHandler(&contact.Name , &contact.Email,&contact.Nationality,&contact.Address,&contact.Username,usedDataBase)
+		num.Number = r.FormValue("number")
 
-	muxer.Handle("/login" ,appHandlers{usedDataBase ,userAccount.loginContactHandler})
+		num.ContactId = int(id)
+
+		_ = addNum(num.Number, num.ContactId, usedDataBase)
+		sessions.GetSession(r).Set("Contact", id)
+	})
+	muxer.HandleFunc("/contact/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var contact ContactInfo
+		contact.DeleteContactHandler(mux.Vars(r)["id"], usedDataBase)
+	}).Methods("DELETE")
+	muxer.HandleFunc("/deletenumber/{numId}", func(w http.ResponseWriter, r *http.Request) {
+		var telephone Telephone
+		telephone.DeleteNumberHandler(mux.Vars(r)["numId"], usedDataBase)
+	}).Methods("DELETE")
+	muxer.HandleFunc("/addnumber/{ContactId}", func(w http.ResponseWriter, r *http.Request) {
+		var telephone Telephone
+		telephone.Number = r.FormValue("NewNumber")
+		if errs := validator.Validate(telephone); errs != nil {
+			checkErr(errs)
+		}
+		ContactID,id := telephone.AddNumberHandler(r.FormValue("NewNumber"), mux.Vars(r)["ContactId"], usedDataBase)
+
+		telephone.Num_id = int(id)
+		telephone.ContactId = int(ContactID)
+		encoder := json.NewEncoder(w)
+		err := encoder.Encode(telephone)
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}).Methods("POST")
+	muxer.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+		sessions.GetSession(r).Set("User", nil)
+		http.Redirect(w, r, "/Login", http.StatusFound)
+	})
+
+	muxer.Handle("/", appHandlers{usedDataBase, serverContent})
+
+	muxer.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		info := User{Username:r.FormValue("username") ,Password:[]byte(r.FormValue("password")) }
+		var userAccount User
+		if errs := validator.Validate(info); errs != nil {
+			checkErr(errs)
+		}
+		p,err:=userAccount.loginContactHandler(&info.Username ,&info.Password , r.FormValue("password"), r.FormValue("username"), r.FormValue("login"), r.FormValue("signUp"), usedDataBase)
+		if r.FormValue("signUp") != ""{
+			if err != nil{
+				p.Error = err.Error()
+
+			}else{
+				//sessions.getsession() to create session variable
+				//.set key-> User , value ->user.Username
+				sessions.GetSession(r).Set("User" , r.FormValue("username"))
+				http.Redirect(w, r, "/Home" , http.StatusFound)
+				return
+			}
+		} else if r.FormValue("login") != ""{
+
+			if err != nil {
+
+				p.Error = err.Error()
+				return
+			}else {
+
+				err := bcrypt.CompareHashAndPassword(info.Password, []byte(r.FormValue("password")))
+
+				if err != nil{
+					p.Error = err.Error()
+				}else {
+					sessions.GetSession(r).Set("User" , r.FormValue("username"))
+					http.Redirect(w, r, "/Home" , http.StatusFound)
+					return
+				}
+			}
+		}
+
+
+
+		templates := template.Must(template.ParseFiles("Login.html"))
+		err = templates.Execute(w,p)
+		if err != nil {
+			http.Error(w, err.Error() , http.StatusInternalServerError)
+			return
+		}
+	})
+
+
+
+
 	muxer.Handle("/{page_alias}" , appHandlers{usedDataBase , serverContent})
 
 	muxer.HandleFunc("/img/" ,serverResource)
 	muxer.HandleFunc("/js/" ,serverResource)
 	muxer.HandleFunc("/css/{page_alias}" ,serverResource)
-
-	//muxerHandleFunc("/viewnumbers/{id}", telephone.ViewTelephonesHandler).Methods("GET")
-	//muxer.HandleFunc("/contact",contact.SaveContactHandler).Methods("POST")
-	//muxer.HandleFunc("/contact/{id}" , contact.DeleteContactHandler).Methods("DELETE")
-	//muxer.HandleFunc("/deletenumber/{numId}" , telephone.DeleteNumberHandler).Methods("DELETE")
-	//muxer.HandleFunc("/addnumber/{ContactId}" ,telephone.AddNumberHandler).Methods("POST")
- 	//muxer.HandleFunc("/logout" ,userAccount.logoutHandler)
-	//muxer.HandleFunc("/" ,serverContent)
-	//muxer.HandleFunc("/login" ,userAccount.loginContactHandler)
-	//muxer.HandleFunc("/{page_alias}" , serverContent)
 
 
 	//it provides some default middleware
@@ -141,145 +230,78 @@ func verifyDatabase(w http.ResponseWriter , r *http.Request , next http.HandlerF
 	next(w,r)
 }
 
-func(info User)loginContactHandler (w http.ResponseWriter , r *http.Request , a *HandlersVars ){
+func(info User)loginContactHandler (objusername *string  , userpassword *[]byte , password string , username string , login string , signUP string ,a *HandlersVars )(LoginPage,error) {
 	var p LoginPage
-
-	if r.FormValue("signUp") != ""{
-		secret , _ := bcrypt.GenerateFromPassword([]byte(r.FormValue("password")) , bcrypt.DefaultCost)
-		info = User{r.FormValue("username") , secret}
+	var err1 error
+	var row *sql.Rows
+	if signUP != ""{
+		secret , _ := bcrypt.GenerateFromPassword([]byte(password) , bcrypt.DefaultCost)
 		stmt ,err := a.db.Prepare("INSERT Users SET username=? , userpassword=?")
-		_ ,err =stmt.Exec(info.Username ,info.Password)
-		if err != nil{
-			p.Error = err.Error()
+		_ , err =stmt.Exec(username ,secret)
+		err1=err
 
-		}else{
-			//sessions.getsession() to create session variable
-			//.set key-> User , value ->user.Username
-			sessions.GetSession(r).Set("User" , info.Username)
-			http.Redirect(w, r, "/Home" , http.StatusFound)
-			return
-		}
-
-	}else if r.FormValue("login") != ""{
-		row ,err := a.db.Query("SELECT * FROM Users WHERE username =?" , r.FormValue("username"))
-		defer row.Close()
+	}else if login  != ""{
+		row ,err1 = a.db.Query("SELECT * FROM Users WHERE username =?" , username )
 		if row.Next(){
-			row.Scan(&info.Username , &info.Password)
+			row.Scan(objusername, userpassword)
+		}
+		defer row.Close()
+
+		 if row == nil{
+			p.Error = " No such user found with the username : " + username
 		}
 
-		if err != nil {
-			p.Error = err.Error()
-			return
-		}else if row == nil{
-			p.Error = " No such user found with the username : " + r.FormValue("username")
-		}else {
-			err := bcrypt.CompareHashAndPassword(info.Password , []byte(r.FormValue("password")))
-			if err != nil{
-				p.Error = err.Error()
-			}else {
-				sessions.GetSession(r).Set("User" , info.Username)
-				http.Redirect(w, r, "/" , http.StatusFound)
-				return
-			}
-		}
+
 	}
 
+	return p ,err1
 
-
-	templates := template.Must(template.ParseFiles("Login.html"))
-	err:= templates.Execute(w,p)
-	if err != nil {
-		http.Error(w, err.Error() , http.StatusInternalServerError)
-		return
-	}
-
-
-
- 	 //info.username = r.FormValue("username")
-	 //info.password = r.FormValue("password")
-	//http.Redirect(w, r, "/Home" , http.StatusFound)
 }
-func(u User)logoutHandler(w http.ResponseWriter , r *http.Request){
-	sessions.GetSession(r).Set("User" , nil)
-	http.Redirect(w , r , "/Login" , http.StatusFound)
-}
-func(contact ContactInfo)SaveContactHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
-	contact.Name = r.FormValue("name")
-	contact.Number = r.FormValue("number")
-	contact.Email = r.FormValue("email")
-	contact.Nationality = r.FormValue("nationality")
-	contact.Address = r.FormValue("address")
-	contact.Username = sessions.GetSession(r).Get("User").(string)
-
+func(contact ContactInfo)SaveContactHandler(name *string , email *string , nationality *string , address *string , username *string , a *HandlersVars) int64 {
 	stmt , err := a.db.Prepare("INSERT Contacts SET name=?  , email=? , nationality=? ,address=? ,username=?")
 	checkErr(err)
-	res , err := stmt.Exec(contact.Name,contact.Email,contact.Nationality,contact.Address,contact.Username)
+	res , err := stmt.Exec(name ,email,nationality,address,username)
 	checkErr(err)
 	id , err := res.LastInsertId()
 	checkErr(err)
 
-	var num Telephone
-	num.Number = r.FormValue("number")
+	return id
 
-	num.ContactId = int(id)
-
-	_ =addNum(num.Number , num.ContactId , a )
-	sessions.GetSession(r).Set("Contact" , id)
 }
-func(contact ContactInfo)DeleteContactHandler (w http.ResponseWriter , r *http.Request , a *HandlersVars){
-	ID , _ := strconv.ParseInt(mux.Vars(r)["id"] , 10 , 64)
-	fmt.Println(ID)
+func(contact ContactInfo)DeleteContactHandler (id string ,a *HandlersVars){
+	ID , _ := strconv.ParseInt(id , 10 , 64)
 	stmt , err := a.db.Prepare("delete from Contacts where id=?")
 	checkErr(err)
 	_ ,err = stmt.Exec(ID)
 	checkErr(err)
 
 }
-func(tele Telephone )ViewTelephonesHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
-	ID , _ := strconv.ParseInt(mux.Vars(r)["id"] , 10 , 64)
+func(tele Telephone )ViewTelephonesHandler(teleContactId int , teleNumber string , teleNum_id int , id string, a *HandlersVars)page{
+	ID , _ := strconv.ParseInt(id, 10 , 64)
 	p1:=page{Numbers:[]Telephone{} }
-	//fmt.Println(ID)
 	rows,err := a.db.Query("select * from Telephones where contactid =?" , ID)
 	checkErr(err)
+	//Telephone{ContactId: , Num_id:}
 	for rows.Next() {
-		rows.Scan(&tele.ContactId ,&tele.Number , &tele.Num_id)
-		p1.Numbers = append(p1.Numbers , tele)
+		rows.Scan(&teleContactId,&teleNumber, &teleNum_id)
+		p1.Numbers = append(p1.Numbers , Telephone{ ContactId:teleContactId ,Number:teleNumber, Num_id:teleNum_id })
 	}
-	//fmt.Println(p1.Numbers)
-	encoder := json.NewEncoder(w)
-	err = encoder.Encode(p1.Numbers)
+	return p1
 
-	if err != nil{
-		http.Error(w, err.Error() , http.StatusInternalServerError)
-	}
 }
-func(tele Telephone)DeleteNumberHandler(w http.ResponseWriter , r *http.Request ,a *HandlersVars){
-	NumID , _ := strconv.ParseInt(mux.Vars(r)["numId"] , 10 , 64)
-	fmt.Println(NumID)
+func(tele Telephone)DeleteNumberHandler( numId string , a *HandlersVars){
+	NumID , _ := strconv.ParseInt(numId , 10 , 64)
 	stmt , err :=a.db.Prepare("delete from Telephones where Numid=?")
 	checkErr(err)
 	_ ,err = stmt.Exec(NumID)
 	checkErr(err)
 
 }
-func(tele Telephone)AddNumberHandler(w http.ResponseWriter , r *http.Request , a *HandlersVars){
-	fmt.Println("helloo from add number ")
-	ContactID , _ := strconv.ParseInt(mux.Vars(r)["ContactId"] , 10 , 64)
-	//fmt.Print("contactid")
-	fmt.Println(ContactID)
-	fmt.Print("new number :")
+func(tele Telephone)AddNumberHandler(newNumber string , contactId string, a *HandlersVars) (int64, int64){
+	ContactID , _ := strconv.ParseInt(contactId , 10 , 64)
+	id := addNum( newNumber, int(ContactID) , a)
+	return ContactID, id
 
-	fmt.Println(r.FormValue("NewNumber"))
-	id := addNum(r.FormValue("NewNumber") , int(ContactID) , a)
-	tele.Number = r.FormValue("NewNumber")
-	tele.ContactId = int(ContactID)
-	tele.Num_id = int(id)
-	encoder := json.NewEncoder(w)
-	err := encoder.Encode(tele)
-
-	if err != nil{
-		http.Error(w, err.Error() , http.StatusInternalServerError)
-	}
 
 }
 func addNum (number string , contactId int , a *HandlersVars)(int64){
@@ -331,7 +353,6 @@ func serverContent (w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	}
 	staticPage := staticPages.Lookup(page_alias+".html")
 	if page_alias == "Home"{
-		fmt.Println("before execute")
 		staticPage.Execute(w,p)
 	}else{
 	staticPage.Execute(w , nil)}
