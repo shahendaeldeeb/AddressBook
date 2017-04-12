@@ -49,11 +49,6 @@ type Telephone struct {
 type HandlersVars struct {
 	db *sql.DB
 }
-type appHandlers struct{
-	*HandlersVars
-	NewHandlerFunc func(http.ResponseWriter, *http.Request ,*HandlersVars)
-}
-
 type middlewareHandlers struct{
 	*HandlersVars
 	NewMiddleWarHandler func(http.ResponseWriter, *http.Request ,http.HandlerFunc, *HandlersVars)
@@ -63,11 +58,7 @@ func (middleware middlewareHandlers)ServeHTTP( w http.ResponseWriter , r *http.R
 	middleware.NewMiddleWarHandler(w,r,next,middleware.HandlersVars)
 
 }
-func (app appHandlers)ServeHTTP( w http.ResponseWriter , r *http.Request){
-	// Updated to pass app.handlervars as a parameter to our handler type.
-	 app.NewHandlerFunc(w,r,app.HandlersVars)
 
-}
 
 func main() {
 	muxer := mux.NewRouter()
@@ -84,7 +75,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
-	muxer.HandleFunc("/contact", func(w http.ResponseWriter, r *http.Request) {
+	muxer.HandleFunc("/contact", func(w http.ResponseWriter, r *http.Request){
 		var contact ContactInfo
 		contact.Name = r.FormValue("name")
 		contact.Number = r.FormValue("number")
@@ -103,7 +94,10 @@ func main() {
 		//       R Range
 		var num Telephone
 
-		id := contact.SaveContactHandler(&contact.Name , &contact.Email,&contact.Nationality,&contact.Address,&contact.Username,usedDataBase)
+		//id := contact.SaveContactHandler(&contact.Name , &contact.Email,&contact.Nationality,&contact.Address,&contact.Username,usedDataBase)
+		id := contact.SaveContactHandler(&contact,usedDataBase)
+
+
 		num.Number = r.FormValue("number")
 
 		num.ContactId = int(id)
@@ -140,16 +134,25 @@ func main() {
 		sessions.GetSession(r).Set("User", nil)
 		http.Redirect(w, r, "/Login", http.StatusFound)
 	})
+	muxer.HandleFunc("/", func(w http.ResponseWriter ,r*http.Request){
+		p,page_alias, staticPage:=serverContent(mux.Vars(r),sessions.GetSession(r).Get("User").(string),usedDataBase)
+		if page_alias == "Home"{
+			staticPage.Execute(w,p)
+		}else{
 
-	muxer.Handle("/", appHandlers{usedDataBase, serverContent})
+			staticPage.Execute(w , nil)
 
+		}
+	})
 	muxer.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		info := User{Username:r.FormValue("username") ,Password:[]byte(r.FormValue("password")) }
+
 		var userAccount User
 		if errs := validator.Validate(info); errs != nil {
 			checkErr(errs)
 		}
-		p,err:=userAccount.loginContactHandler(&info.Username ,&info.Password , r.FormValue("password"), r.FormValue("username"), r.FormValue("login"), r.FormValue("signUp"), usedDataBase)
+		p,err:=userAccount.loginContactHandler(&info ,r.FormValue("login"), r.FormValue("signUp"), usedDataBase)
+
 		if r.FormValue("signUp") != ""{
 			if err != nil{
 				p.Error = err.Error()
@@ -162,15 +165,11 @@ func main() {
 				return
 			}
 		} else if r.FormValue("login") != ""{
-
 			if err != nil {
-
 				p.Error = err.Error()
 				return
 			}else {
-
 				err := bcrypt.CompareHashAndPassword(info.Password, []byte(r.FormValue("password")))
-
 				if err != nil{
 					p.Error = err.Error()
 				}else {
@@ -184,18 +183,25 @@ func main() {
 
 
 		templates := template.Must(template.ParseFiles("Login.html"))
+
 		err = templates.Execute(w,p)
+
 		if err != nil {
 			http.Error(w, err.Error() , http.StatusInternalServerError)
 			return
 		}
+
+	}).Methods("GET")
+	muxer.HandleFunc("/{page_alias}" , func(w http.ResponseWriter ,r*http.Request){
+	p,page_alias, staticPage:=serverContent(mux.Vars(r),sessions.GetSession(r).Get("User").(string),usedDataBase)
+		if page_alias == "Home"{
+			staticPage.Execute(w,p)
+		}else{
+
+			staticPage.Execute(w , nil)
+
+		}
 	})
-
-
-
-
-	muxer.Handle("/{page_alias}" , appHandlers{usedDataBase , serverContent})
-
 	muxer.HandleFunc("/img/" ,serverResource)
 	muxer.HandleFunc("/js/" ,serverResource)
 	muxer.HandleFunc("/css/{page_alias}" ,serverResource)
@@ -230,25 +236,27 @@ func verifyDatabase(w http.ResponseWriter , r *http.Request , next http.HandlerF
 	next(w,r)
 }
 
-func(info User)loginContactHandler (objusername *string  , userpassword *[]byte , password string , username string , login string , signUP string ,a *HandlersVars )(LoginPage,error) {
+func(info User)loginContactHandler (objuser *User  ,  login string , signUP string ,a *HandlersVars )(LoginPage,error) {
 	var p LoginPage
 	var err1 error
 	var row *sql.Rows
+
 	if signUP != ""{
-		secret , _ := bcrypt.GenerateFromPassword([]byte(password) , bcrypt.DefaultCost)
+		secret , _ := bcrypt.GenerateFromPassword(objuser.Password , bcrypt.DefaultCost)
 		stmt ,err := a.db.Prepare("INSERT Users SET username=? , userpassword=?")
-		_ , err =stmt.Exec(username ,secret)
+		_ , err =stmt.Exec(objuser.Username ,secret)
 		err1=err
 
 	}else if login  != ""{
-		row ,err1 = a.db.Query("SELECT * FROM Users WHERE username =?" , username )
+		row ,err1 = a.db.Query("SELECT * FROM Users WHERE username =?" , objuser.Username )
+
 		if row.Next(){
-			row.Scan(objusername, userpassword)
+			row.Scan(&objuser.Username, &objuser.Password)
 		}
 		defer row.Close()
 
 		 if row == nil{
-			p.Error = " No such user found with the username : " + username
+			p.Error = " No such user found with the username : " + objuser.Username
 		}
 
 
@@ -257,10 +265,12 @@ func(info User)loginContactHandler (objusername *string  , userpassword *[]byte 
 	return p ,err1
 
 }
-func(contact ContactInfo)SaveContactHandler(name *string , email *string , nationality *string , address *string , username *string , a *HandlersVars) int64 {
+func(contact ContactInfo)SaveContactHandler(contactInfo *ContactInfo , a *HandlersVars) int64 {
+
 	stmt , err := a.db.Prepare("INSERT Contacts SET name=?  , email=? , nationality=? ,address=? ,username=?")
 	checkErr(err)
-	res , err := stmt.Exec(name ,email,nationality,address,username)
+
+	res , err := stmt.Exec(contactInfo.Name ,contactInfo.Email,contactInfo.Nationality,contactInfo.Address,contactInfo.Username)
 	checkErr(err)
 	id , err := res.LastInsertId()
 	checkErr(err)
@@ -333,12 +343,14 @@ func populateStaticPages() *template.Template{
 	result.ParseFiles(*templatePathes...)
 	return  result
 }
-func serverContent (w http.ResponseWriter , r *http.Request , a *HandlersVars){
+func serverContent ( urlParams map[string]string ,username string, a *HandlersVars)(page,string ,*template.Template ){
 	staticPages := populateStaticPages()
 
 	p := page{Contacts:[]ContactInfo{}}
-	rows , err := a.db.Query("select * from Contacts where username =? " ,sessions.GetSession(r).Get("User").(string))
-        checkErr(err)
+	rows , err := a.db.Query("select * from Contacts where username =? " ,username)
+
+	checkErr(err)
+
 	var contact ContactInfo
 	for rows.Next() {
 		rows.Scan(&contact.Name ,&contact.Email ,&contact.Nationality ,&contact.Address , &contact.Username ,&contact.Id)
@@ -346,16 +358,13 @@ func serverContent (w http.ResponseWriter , r *http.Request , a *HandlersVars){
 	}
 
 	//mux.vars() -> creates a map of rout variables that can be retrieved
-        urlParams := mux.Vars(r)
+        //urlParams := mux.Vars(r)
 	page_alias := urlParams["page_alias"]
 	if page_alias ==""{
 		page_alias="Home"
 	}
 	staticPage := staticPages.Lookup(page_alias+".html")
-	if page_alias == "Home"{
-		staticPage.Execute(w,p)
-	}else{
-	staticPage.Execute(w , nil)}
+        return p,page_alias, staticPage
 
 
 }
