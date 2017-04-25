@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <style>
+        .add-form{
+                text-align:left;
+                border:2px solid;
+                width:350px;
+            }
+         .app_functionality{
+         text-align:center;
+         }
+         .tab {
+            overflow: hidden;
+            border: 1px solid #ccc;
+            background-color: #f1f1f1;
+          }
+          .tab button {
+            background-color: inherit;
+            float: left;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            padding: 14px 16px;
+            transition: 0.3s;
+          }
+          div.tab button:hover {
+               background-color: #ddd;
+          }
+          div.tab button.active {
+            background-color: #ccc;
+           }
+           /* Style the tab content */
+        .tabContent {
+            display: none;
+            padding: 6px 12px;
+            border: 1px solid #ccc;
+            border-top: none;
+           }
+          .tabContent {
+                -webkit-animation: fadeEffect 1s;
+                animation: fadeEffect 1s; /* Fading effect takes 1 second */
+           }
+
+            @-webkit-keyframes fadeEffect {
+                from {opacity: 0;}
+                to {opacity: 1;}
+            }
+
+            @keyframes fadeEffect {
+                from {opacity: 0;}
+                to {opacity: 1;}
+            }
+            .telephone-form{
+            display:none;
+            }
+
+    </style>
+    <title> Home Page </title>
+
+    <!-- Bootstrap core CSS -->
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Custom styles for this template -->
+    <link href="/css/jumbotron.css" rel="stylesheet">
+
+</head>
+
+<body >
+
+<div class="container">
+    <div class="header clearfix">
+        <nav>
+            <ul class="nav nav-pills float-right">
+                <li class="nav-item">
+                    <a class="nav-link active" href="Home">Home </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="About">About</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="Contact">Contact</a>
+                </li>
+                <li>
+                    <a href="/logout"> Logout </a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+    <div class="jumbotron">
+        <h1 class="display-3">Home Page</h1>
+    </div>
+    <div class="tab">
+        <button class="tablinks" onclick="open_event(event, 'add-form')" id="defaultOpen">Add Contact </button>
+        <button class="tablinks" onclick="open_event(event, 'show-form')">View Contact</button>
+    </div>
+<!-- --------------------Main div--------------------- -->
+    <div id="add-form" class="tabContent">
+        <form id="Add-Contact"   >
+            <div>
+                Name :<input name="name" />
+            </div>
+            <div>
+                Number :<input name="number" type="number"/>
+            </div>
+            <div>
+                Email :<input name="email" type="email"/>
+            </div>
+            <div>
+                Nationality :<input name="nationality"/>
+            </div>
+            <div>
+                Address :<input name="address"/>
+            </div>
+            <div>
+                <input type="submit" value="Add" name="add" onclick="save()" />
+            </div>
+        </form>
+    </div>
+    <div class="tabContent" id="show-form" onsubmit="return false">
+        <table>
+            <thead>
+            <tr style="text-align : left ;">
+                <th width="10%">Name</th>
+                <th width="30%">Email</th>
+                <th width="15%">Nationality</th>
+                <th width="30%">Address</th>
+            </tr>
+            </thead>
+            <tbody id = "view-result">
+            {{range .Contacts}}
+            <tr id="contact-row-{{.Id}}">
+                <td>{{.Name}}</td>
+                <td>{{.Email}}</td>
+                <td>{{.Nationality}}</td>
+                <td>{{.Address}}</td>
+                <td>
+                    <button class="delete-btn" onclick="DeleteContact({{.Id}})"> Delete </button>
+                </td>
+                <td>
+                    <button class="View-btn" onclick="ViewContactData({{.Id}})" > View Numbers </button>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+    <div class="telephone-form" id="telephone-form" onsubmit="return false"  >
+        <form id ="NewNum">
+            <input name="NewNumber"/>
+            <input type="submit" id="addNum-Btn"  value="Add Number" />
+        </form>
+        <table>
+            <thead>
+            <tr>
+                <th width="40%"> Telephones </th>
+                <th width="10%"></th>
+            </tr>
+            </thead>
+            <tbody id = "view-Numbers">
+            <!-- how to make contact id accessible here  -->
+            <!--<input type="submit" value="Add Number"/> -->
+
+            </tbody>
+        </table>
+    </div>
+
+</div> <!-- /container -->
+<script type="text/javascript" src="http://code.jquery.com/jquery-2.1.4.min.js" ></script>
+<script type="text/javascript">
+
+// Get the element with id="defaultOpen" and click on it
+document.getElementById("defaultOpen").click();
+
+function save(){
+    $.ajax({
+        url:"/contact",
+        type:"POST",
+        data:$("#Add-Contact").serialize(),
+    });
+    return false;
+}
+function DeleteContact(id){
+    $.ajax({
+        url:"/contact/"+id,
+        type:"DELETE",
+        success:function(){
+            $("#contact-row-" +id).remove();
+        },
+    })
+}
+
+function ViewContactData(id){
+    $("#telephone-form").show();
+    $("#show-form").hide();
+    $.ajax({
+        url:"/viewnumbers/" + id ,
+        type:"GET" ,
+        success:function(dataFromServer){
+         var parsed = JSON.parse(dataFromServer);
+                if (!parsed ) return;
+
+                var SearchResult = $('#view-Numbers');
+                SearchResult.empty();
+                var contactId;
+
+                parsed.forEach(function(result){
+                contactId =result.ContactId ;
+                console.log(6);
+                var row = $("<tr id='tele-row-"+result.num_id+"'><td>"+result.Number+"</td><td><button class='delete-btn' onclick='DeleteNumber("+result.Num_id+")'>Delete Number</button></td></tr>");
+                SearchResult.append(row);
+                })
+
+                var button = document.getElementById("addNum-Btn").onclick=function(){AddNumber(contactId);};
+
+
+          }
+
+    });
+}
+function DeleteNumber(numId)
+{
+    $.ajax({
+    url:"/deletenumber/" + numId ,
+    type:"DELETE",
+    success:function(){
+    $("#tele-row-" +numId).remove();
+        },
+    });
+}
+function AddNumber(ContactId)
+{
+    $.ajax({
+        url:"/addnumber/" + ContactId ,
+        type:"POST" ,
+        data:$("#NewNum").serialize(),
+        success:function(dataFromServer){
+            var parsed = JSON.parse(dataFromServer);
+                if (!parsed ) return;
+                var SearchResult = $('#view-Numbers');
+                var row = $("<tr id='tele-row-"+parsed.Num_id+"'><td>"+parsed.Number+"</td><td><button class='delete-btn' onclick='DeleteNumber("+parsed.Num_id+")'>Delete Number</button></td></tr>");
+
+                SearchResult.append(row);
+        },
+    });
+}
+function open_event(evt, formName)
+{
+    // Declare all variables
+    var i, tabContent, tabLinks;
+
+    // Get all elements with class="tabContent" and hide them
+    tabContent = document.getElementsByClassName("tabContent");
+    for (i = 0; i < tabContent.length; i++) {
+        tabContent[i].style.display = "none";
+    }
+
+    // Get all elements with class="tabLinks" and remove the class "active"
+    tabLinks = document.getElementsByClassName("tabLinks");
+    for (i = 0; i < tabLinks.length; i++) {
+        tabLinks[i].className = tabLinks[i].className.replace(" active", "");
+    }
+
+// Show the current tab, and add an "active" class to the button that opened the tab
+    document.getElementById(formName).style.display = "block";
+    document.getElementById("telephone-form").style.display = "none";
+    evt.currentTarget.className += " active";
+}
+
+</script>
+</body>
+</html>
